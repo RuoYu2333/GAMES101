@@ -1,0 +1,3 @@
+/home/ruoyu/games/GAMES101/Assignment1/work01/build/CMakeFiles/Rasterizer.dir
+/home/ruoyu/games/GAMES101/Assignment1/work01/build/CMakeFiles/edit_cache.dir
+/home/ruoyu/games/GAMES101/Assignment1/work01/build/CMakeFiles/rebuild_cache.dir

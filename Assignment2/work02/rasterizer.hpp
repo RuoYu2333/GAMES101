@@ -72,6 +72,7 @@ namespace rst
 
         void draw(pos_buf_id pos_buffer, ind_buf_id ind_buffer, col_buf_id col_buffer, Primitive type);
 
+        void resolve_to_framebuffer();
         std::vector<Eigen::Vector3f>& frame_buffer() { return frame_buf; }
 
     private:
@@ -85,7 +86,9 @@ namespace rst
         Eigen::Matrix4f model;
         Eigen::Matrix4f view;
         Eigen::Matrix4f projection;
-
+        int ssaa_factor = 2; // 超采样倍数（例如2x2）
+        std::vector<std::vector<Vector3f>> ssaa_frame_buf;  // 子样本颜色缓冲
+        std::vector<std::vector<float>> ssaa_depth_buf;     // 子样本深度缓冲
         std::map<int, std::vector<Eigen::Vector3f>> pos_buf;
         std::map<int, std::vector<Eigen::Vector3i>> ind_buf;
         std::map<int, std::vector<Eigen::Vector3f>> col_buf;

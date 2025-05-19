@@ -42,7 +42,35 @@ auto to_vec4(const Eigen::Vector3f& v3, float w = 1.0f)
 
 static bool insideTriangle(int x, int y, const Vector3f* _v)
 {   
-    // TODO : Implement this function to check if the point (x, y) is inside the triangle represented by _v[0], _v[1], _v[2]
+    // 1. Check if the point is inside the triangle using barycentric coordinates
+    // 2. If the point is inside, return true; otherwise, return false
+     int flag = -1;
+
+    for(int i = 0; i < 3; i++) {
+        // the current point
+        Eigen::Vector3f p0 = {x, y, 0};
+        // the 1st vertex
+        Eigen::Vector3f p1 = _v[i];
+        // the 2nd vertex
+        Eigen::Vector3f p2 = _v[(i+1)%3];//next point
+        
+        // the 1st vector (p1-p0)
+        Eigen::Vector3f v1 = p1-p0;
+        // the 2nd vector (p1-p2)
+        Eigen::Vector3f v2 = p1-p2;
+
+        // get the cross product
+        float cp = v1.cross(v2).z();
+        if(cp == 0) continue;
+
+        int sign = cp < 0 ? 0: 1;
+        if(flag == -1) flag = sign;
+        if(flag != sign) return false;
+    }
+
+    return true;
+    
+
 }
 
 static std::tuple<float, float, float> computeBarycentric2D(float x, float y, const Vector3f* v)
@@ -99,6 +127,7 @@ void rst::rasterizer::draw(pos_buf_id pos_buffer, ind_buf_id ind_buffer, col_buf
         t.setColor(2, col_z[0], col_z[1], col_z[2]);
 
         rasterize_triangle(t);
+        resolve_to_framebuffer();
     }
 }
 
@@ -106,18 +135,68 @@ void rst::rasterizer::draw(pos_buf_id pos_buffer, ind_buf_id ind_buffer, col_buf
 void rst::rasterizer::rasterize_triangle(const Triangle& t) {
     auto v = t.toVector4();
     
-    // TODO : Find out the bounding box of current triangle.
-    // iterate through the pixel and find if the current pixel is inside the triangle
+    // 计算三角形包围盒
+    float min_x = std::min({v[0].x(), v[1].x(), v[2].x()});
+    float max_x = std::max({v[0].x(), v[1].x(), v[2].x()});
+    float min_y = std::min({v[0].y(), v[1].y(), v[2].y()});
+    float max_y = std::max({v[0].y(), v[1].y(), v[2].y()});
 
-    // If so, use the following code to get the interpolated z value.
-    //auto[alpha, beta, gamma] = computeBarycentric2D(x, y, t.v);
-    //float w_reciprocal = 1.0/(alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
-    //float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
-    //z_interpolated *= w_reciprocal;
+    // 遍历包围盒内每个像素
+    for (int y = min_y; y <= max_y; ++y) {
+        for (int x = min_x; x <= max_x; ++x) {
+            // 遍历子样本（2x2）
+            int num_covered = 0;
+            Vector3f blended_color(0, 0, 0);
+            
+            for (int dy = 0; dy < ssaa_factor; ++dy) {
+                for (int dx = 0; dx < ssaa_factor; ++dx) {
+                    // 计算子样本坐标（偏移0.25实现2x2网格）
+                    float sample_x = x + (dx + 0.5) / ssaa_factor;
+                    float sample_y = y + (dy + 0.5) / ssaa_factor;
 
-    // TODO : set the current pixel (use the set_pixel function) to the color of the triangle (use getColor function) if it should be painted.
+                    // 检查子样本是否在三角形内
+                    if (insideTriangle(sample_x, sample_y, t.v)) {
+                        // 计算重心坐标
+                        auto [alpha, beta, gamma] = computeBarycentric2D(sample_x, sample_y, t.v);
+                        
+                        // 插值深度
+                        float w_reciprocal = 1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
+                        float z_interpolated = alpha * v[0].z()/v[0].w() + beta * v[1].z()/v[1].w() + gamma * v[2].z()/v[2].w();
+                        z_interpolated *= w_reciprocal;
+
+                        // 子样本索引
+                        int sample_index = dy * ssaa_factor + dx;
+                        int pixel_index = get_index(x, y);
+                        
+                        // 深度测试
+                        if (z_interpolated < ssaa_depth_buf[pixel_index][sample_index]) {
+                            ssaa_depth_buf[pixel_index][sample_index] = z_interpolated;
+                            ssaa_frame_buf[pixel_index][sample_index] = t.getColor();
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
-
+// 解决SSAA到主缓冲区
+void rst::rasterizer::resolve_to_framebuffer() {
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            Vector3f avg_color(0, 0, 0);
+            int pixel_idx = get_index(x, y);
+            
+            // 混合所有子样本颜色
+            for (const auto& sample : ssaa_frame_buf[pixel_idx]) {
+                avg_color += sample;
+            }
+            avg_color /= (ssaa_factor * ssaa_factor);
+            
+            // 写入主缓冲区
+            frame_buf[pixel_idx] = avg_color;
+        }
+    }
+}
 void rst::rasterizer::set_model(const Eigen::Matrix4f& m)
 {
     model = m;
@@ -145,10 +224,14 @@ void rst::rasterizer::clear(rst::Buffers buff)
     }
 }
 
-rst::rasterizer::rasterizer(int w, int h) : width(w), height(h)
-{
+rst::rasterizer::rasterizer(int w, int h) : width(w), height(h) {
     frame_buf.resize(w * h);
     depth_buf.resize(w * h);
+
+    // 初始化SSAA缓冲区（每个像素 ssaa_factor^2 个子样本）
+    int samples = ssaa_factor * ssaa_factor;
+    ssaa_frame_buf.resize(w * h, std::vector<Vector3f>(samples, Vector3f(0,0,0)));
+    ssaa_depth_buf.resize(w * h, std::vector<float>(samples, std::numeric_limits<float>::infinity()));
 }
 
 int rst::rasterizer::get_index(int x, int y)
@@ -163,5 +246,6 @@ void rst::rasterizer::set_pixel(const Eigen::Vector3f& point, const Eigen::Vecto
     frame_buf[ind] = color;
 
 }
+
 
 // clang-format on

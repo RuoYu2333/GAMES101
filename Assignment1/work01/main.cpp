@@ -56,22 +56,30 @@ Eigen::Matrix4f convert3x3To4x4(const Eigen::Matrix3f& mat3x3) {
     return mat4x4;
 }
 
-Eigen::Matrix4f get_model_matrix(float rotation_angle, Vector3f axis)
+Eigen::Matrix4f get_model_matrix(float angle, Vector3f axis)
 {
     trans_to_identity(axis);
-    Eigen::Matrix4f model = Eigen::Matrix4f::Identity();
-    //绕任意轴旋转
-    const Eigen::Matrix3f matrix1_=cos(rotation_angle * MY_PI / 180)*Eigen::Matrix3f::Identity();
-    const Eigen::Matrix3f matrix2_=(1-cos(rotation_angle * MY_PI / 180))*axis*axis.transpose();
-    Eigen::Matrix3f matrix3_;
-    matrix3_<<0,-axis[2],axis[1],
-              axis[2],0,-axis[0],
-              -axis[1],axis[0],0;
-    Eigen::Matrix3f rotation_matrix=matrix1_+matrix2_+sin(rotation_angle)*matrix3_;
-    convert3x3To4x4(rotation_matrix);
-    model=convert3x3To4x4(rotation_matrix)*model;
+    double fangle = angle / 180 * MY_PI;
+    Eigen::Matrix4f I, N, Rod;
+    Eigen::Vector4f axi;
+    Eigen::RowVector4f taxi;
 
-    return model;
+    axi << axis.x(), axis.y(), axis.z(), 0;
+    taxi << axis.x(), axis.y(), axis.z(), 0;
+
+    I << 1, 0, 0, 0,
+         0, 1, 0, 0,
+         0, 0, 1, 0,
+         0, 0, 0, 1;
+
+    N << 0, -axis.z(), axis.y(), 0,
+         axis.z(), 0, -axis.x(), 0,
+         -axis.y(), axis.x(), 0, 0,
+         0, 0, 0, 1;
+    
+    Rod = cos(fangle) * I + (1 - cos(fangle)) * axi * taxi + sin(fangle) * N;
+    Rod(3, 3) = 1;
+    return Rod;
 }
 
 Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio,

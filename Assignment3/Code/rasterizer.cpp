@@ -179,7 +179,7 @@ void rst::rasterizer::draw(std::vector<Triangle *> &TriangleList) {
     for (const auto& t:TriangleList)
     {
         Triangle newtri = *t;
-
+        
         std::array<Eigen::Vector4f, 3> mm {
                 (view * model * t->v[0]),
                 (view * model * t->v[1]),
@@ -197,6 +197,7 @@ void rst::rasterizer::draw(std::vector<Triangle *> &TriangleList) {
                 mvp * t->v[1],
                 mvp * t->v[2]
         };
+
         //Homogeneous division
         for (auto& vec : v) {
             vec.x()/=vec.w();
@@ -264,10 +265,43 @@ void rst::rasterizer::rasterize_triangle(const Triangle& t, const std::array<Eig
     //    * v[i].w() is the vertex view space depth value z.
     //    * Z is interpolated view space depth for the current pixel
     //    * zp is depth between zNear and zFar, used for z-buffer
-
-    // float Z = 1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
-    // float zp = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
-    // zp *= Z;
+    //    float zp = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
+    //    zp *= Z;
+    auto v = t.toVector4();
+    Vector3f color;
+    float alpha, beta, gamma, lmin=INT_MAX, rmax=INT_MIN, tmax=INT_MIN, bmin=INT_MAX, id;
+    for(auto &k:v){//找到bounding box的边界坐标
+        lmin = int(std::min(lmin,k.x()));
+        rmax = std::max(rmax,k.x());rmax = rmax == int(rmax) ? int(rmax)-1 : rmax;
+        tmax = std::max(tmax,k.y());tmax = tmax == int(tmax) ? int(tmax)-1 : tmax;
+        bmin = int(std::min(bmin,k.y()));
+    }
+    for(float i = lmin; i <= rmax; i++){
+        for(float j = bmin; j <= tmax; j++){//遍历bounding box像素
+            id = get_index(i,j);
+            if(insideTriangle(i+0.5, j+0.5, t.v)){//如果像素在三角形内
+                // If so, use the following code to get the interpolated z value.
+                std::tie(alpha, beta, gamma) = computeBarycentric2D(i+0.5, j+0.5, t.v);
+                float w_reciprocal = 1.0/(alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
+                float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
+                z_interpolated *= w_reciprocal;
+                    
+                if (-z_interpolated < depth_buf[id]){//如果该像素的深度更小，更新像素深度、颜色表
+                    auto interpolated_color = interpolate(alpha, beta, gamma, t.color[0], t.color[1], t.color[2], 1);
+                    auto interpolated_normal = interpolate(alpha, beta, gamma, t.normal[0], t.normal[1], t.normal[2], 1).normalized();
+                    auto interpolated_texcoords = interpolate(alpha, beta, gamma, t.tex_coords[0], t.tex_coords[1], t.tex_coords[2], 1);
+                    auto interpolated_shadingcoords = interpolate(alpha, beta, gamma, view_pos[0], view_pos[1], view_pos[2], 1);
+                    fragment_shader_payload payload(interpolated_color, interpolated_normal.normalized(), interpolated_texcoords, texture ? &*texture : nullptr);
+                    payload.view_pos = interpolated_shadingcoords;
+                    depth_buf[id] = -z_interpolated;    
+                    frame_buf[id] = fragment_shader(payload);
+                    // TODO : set the current pixel (use the set_pixel function) to the color of the triangle (use getColor function) if it should be painted.
+                    set_pixel({i,j}, frame_buf[id]);
+                }
+            }
+        }
+    }
+    
 
     // TODO: Interpolate the attributes:
     // auto interpolated_color
@@ -279,8 +313,7 @@ void rst::rasterizer::rasterize_triangle(const Triangle& t, const std::array<Eig
     // Use: payload.view_pos = interpolated_shadingcoords;
     // Use: Instead of passing the triangle's color directly to the frame buffer, pass the color to the shaders first to get the final color;
     // Use: auto pixel_color = fragment_shader(payload);
-
- 
+    
 }
 
 void rst::rasterizer::set_model(const Eigen::Matrix4f& m)
@@ -314,7 +347,6 @@ rst::rasterizer::rasterizer(int w, int h) : width(w), height(h)
 {
     frame_buf.resize(w * h);
     depth_buf.resize(w * h);
-
     texture = std::nullopt;
 }
 

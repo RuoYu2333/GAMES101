@@ -61,9 +61,9 @@ bool Scene::trace(
 Vector3f Scene::castRay(const Ray &ray, int depth) const
 {
     // TO DO Implement Path Tracing Algorithm here
-    Intersection inter = intersect(ray);
+    auto inter = intersect(ray);
     if (!inter.happened) {
-        return Vector3f();
+        return backgroundColor;//不是这里的问题
     }
 
     // 打到光源
@@ -84,10 +84,11 @@ Vector3f Scene::castRay(const Ray &ray, int depth) const
             Vector3f ws = lightInter.coords - inter.coords;
             Vector3f ws_n = ws.normalized();
             float power = ws.x * ws.x + ws.y * ws.y + ws.z * ws.z;
-
-            Ray shadowRay(inter.coords, ws_n);
+            auto NN= inter.normal;
+            Ray shadowRay(inter.coords + NN * EPSILON, ws_n);
             Intersection t = intersect(shadowRay);
-            if (t.distance - ws.norm() > -EPSILON)
+            //这段加上对光源的检测后会出现大量噪点（WHY？）
+              if (t.distance - ws.norm() > -EPSILON)
             {
                 l_dir = lightInter.emit * inter.m->eval(ray.direction, ws_n, inter.normal) 
                     * dotProduct(ws_n, inter.normal) 
